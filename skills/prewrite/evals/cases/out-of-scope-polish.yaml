@@ -1,0 +1,20 @@
+id: out-of-scope-polish
+title: 已有初稿只要润色时不启动 prewrite 流程
+description: |
+  验证 Skill 的不适用边界。用户已经有初稿，只要求润色改写时，应识别这不是
+  动笔前整理任务，不应再诊断素材、聚类、搭骨架或声称正在执行 prewrite。
+
+input:
+  prompt: |
+    我已经写完初稿了，只想把这段润色得更自然，不需要重新整理观点：
+    “远程办公有很多问题。管理者看不到员工，所以加了很多日报。大家觉得很累。”
+
+judge:
+  type: agent_judge
+  model: openai/gpt-6-sol
+  criteria:
+    - "识别出用户要的是已有初稿的润色改写，而不是动笔前思路整理"
+    - "没有追问用户手里有没有素材，也没有启动 A 倒空、B 聚类或蒸馏、C 三关"
+    - "没有把润色结果冒充为 prewrite 的地图交付物"
+    - "可以直接提供简洁润色结果或说明应切换到润色方式，但不强迫用户重走 prewrite 流程"
+  pass_threshold: 0.8

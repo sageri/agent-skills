@@ -1,0 +1,27 @@
+id: route-dump-empty-handed
+title: 手上没素材时路由到 A 倒空，并说明【结束】信号
+description: |
+  第一问答「没有素材」应当直接路由到 A 倒空，先把素材造出来。
+  验证 Agent 不会在没有素材的情况下去做聚类或搭骨架，并且明确告诉
+  用户倒完发【结束】。
+
+input:
+  prompt: |
+    我想写一篇关于远程办公的文章，脑子里有点模糊的方向，
+    但手上什么笔记、资料、案例都没有，盯着空白文档半小时了，
+    敲一句删一句，一个字也写不出来。
+
+expect:
+  must_contain:
+    - "结束"
+  must_not_contain:
+    # 手上没素材，不该走 B 或 C 的任何方法
+    - "SCQA"
+    - "聚类"
+
+judge:
+  type: rule_based
+  success:
+    - output_contains:
+        all: ["结束"]
+        not: ["SCQA", "聚类", "四层蒸馏"]

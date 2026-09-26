@@ -1,0 +1,60 @@
+# 运行：skill-up validate ./evals/eval.yaml（validate/run 都须先设 AGY_ENGINE_PATH）
+# 默认引擎 agy（eli5/evals/agy-engine.mjs 适配器，需 agy 已登录）：
+#   AGY_ENGINE_PATH=<repo>/skills/eli5/evals/agy-engine.mjs \
+#     skill-up run ./evals/eval.yaml
+# codex 引擎备用：skill-up run ./evals/eval.yaml --engine codex
+# Claude Code 备用（需可用凭据）：skill-up run ./evals/eval.yaml --engine claude_code
+# skill-up 评测配置模式版本，勿改
+schema_version: v1alpha1
+
+environment:
+  # 纯对话类 Skill，不产出文件，不需要沙箱
+  type: none
+
+skills:
+  # 安装被测 Skill 本体（SKILL.md 及 A/B/C 三个分支文件）
+  - source: local_path
+    path: .
+
+engine:
+  # 默认引擎 agy（custom 适配器 agy-engine.mjs，AGY_ENGINE_PATH 指向 eli5 的 evals/）
+  name: agy
+  custom:
+    transport: local
+    response_format: session_result
+    timeout_seconds: 300
+    local:
+      command: node
+      args:
+        - ${AGY_ENGINE_PATH}
+        - --input
+        - ${input_file}
+        - --output
+        - ${output_file}
+        - --cwd
+        - ${workspace}
+      cwd: ${workspace}
+      input_file: ${input_file}
+      output_file: ${output_file}
+
+cases:
+  files:
+    - evals/cases/one-question-at-a-time.yaml
+    - evals/cases/route-dump-empty-handed.yaml
+    - evals/cases/dump-mode-stays-quiet.yaml
+    - evals/cases/dump-end-extracts-map.yaml
+    - evals/cases/route-cluster-overload.yaml
+    - evals/cases/four-layer-distillation.yaml
+    - evals/cases/route-sharpen-claim.yaml
+    - evals/cases/scqa-pressure-test.yaml
+    - evals/cases/logic-one-question.yaml
+    - evals/cases/logic-chain-check.yaml
+    - evals/cases/final-four-check.yaml
+    - evals/cases/out-of-scope-polish.yaml
+  defaults:
+    # 需要读 SKILL.md，再按路由读 A/B/C 其中一个文件，然后回复用户
+    timeout_seconds: 300
+    max_turns: 10
+
+report:
+  formats: [json]
