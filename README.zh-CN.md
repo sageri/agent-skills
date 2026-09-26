@@ -25,10 +25,10 @@
 
 | Skill | 一句话 | 触发方式 |
 |---|---|---|
-| 🖱️ **[jev-browser-skill](#-jev-browser-skill)** | 把多步浏览器任务压成一次调用，**快约 3 倍** | `/jev-browser-skill` |
-| 🛡️ **[cross-review](#-cross-review)** | 另一个 AI 只读审你的每一步，盲点被揪出来 | 说"双审"或 `/cross-review` |
-| 🗺️ **[prewrite](#-prewrite)** | 把一团乱的想法，整理成一张可以直接开写的地图 | 自动触发，或 `/prewrite` |
-| 📰 **[read-article](#-read-article)** | 小红书 / 公众号文章 → 干净的 Markdown | 贴出链接时自动触发 |
+| 🖱️ **[jev-browser-skill](#jev-browser-skill)** | 把多步浏览器任务压成一次调用，**快约 3 倍** | `/jev-browser-skill` |
+| 🛡️ **[cross-review](#cross-review)** | 另一个 AI 只读审你的每一步，盲点被揪出来 | 说"双审"或 `/cross-review` |
+| 🗺️ **[prewrite](#prewrite)** | 把一团乱的想法，整理成一张可以直接开写的地图 | 自动触发，或 `/prewrite` |
+| 📰 **[read-article](#read-article)** | 小红书 / 公众号文章 → 干净的 Markdown | 贴出链接时自动触发 |
 
 ---
 
@@ -41,6 +41,8 @@ npx skills add sageri/agent-skills -s jev-browser-skill -g
 把 `jev-browser-skill` 换成任意 skill 名；`-s '*'` 一次装全部四个。`-g` 装到用户级，去掉则装到当前项目。
 
 ---
+
+<a id="jev-browser-skill"></a>
 
 ## 🖱️ jev-browser-skill：让浏览器自动化，**不再一卡一顿**
 
@@ -84,6 +86,8 @@ node <skill目录>/scripts/loop.mjs \
 
 ---
 
+<a id="cross-review"></a>
+
 ## 🛡️ cross-review：让另一个 AI，**只读审你的每一步**
 
 > 一个人写的代码，审不出自己的盲点。
@@ -100,6 +104,8 @@ node <skill目录>/scripts/loop.mjs \
 
 ---
 
+<a id="prewrite"></a>
+
 ## 🗺️ prewrite：把一团乱的想法，**变成一张地图**
 
 > 第一句写不出来？先别写。
@@ -115,6 +121,8 @@ prewrite 先找出你卡在哪，再交给你**一张地图**，而不是一篇�
 > ℹ️ 已有初稿要润色时不适用。
 
 ---
+
+<a id="read-article"></a>
 
 ## 📰 read-article：小红书 / 公众号 → Markdown
 
