@@ -64,9 +64,9 @@ agy -p "Reply with exactly: pong" --output-format json 2>&1 | head -c 600   # �
 
 # ② 无头审核调用（预估 >5 分钟显式传 --print-timeout）
 # 送审包 ≤30K 字符：命令替换把整个文件作单个 argv 元素，对包内任意引号免疫
-agy -p "$(cat packet.md)" --output-format json [--print-timeout 16m]
+agy -p "$(cat packet.md)" --mode plan --output-format json [--print-timeout 16m]
 # 送审包 >30K 字符（Windows argv 上限 ~32K）：落 <项目根>/dp-packet-<gate>.md（项目根＝trusted workspace，非点前缀），-p 只传 ASCII 短提示：
-agy -p "Read the whole file <绝对路径，正斜杠> and follow it. Read-only: do not modify files. Do not call any MCP tool. First line of your reply: Read-Check: <file末尾校验串>. Second line: SECTIONS: <file中 SECTION 块数>. Then the review result." --output-format json [--print-timeout 16m]
+agy -p "Read the whole file <绝对路径，正斜杠> and follow it. Read-only: do not modify files. Do not call any MCP tool. First line of your reply: Read-Check: <file末尾校验串>. Second line: SECTIONS: <file中 SECTION 块数>. Then the review result." --mode plan --output-format json [--print-timeout 16m]
 # 用完删 dp-packet 文件；送审包原文照旧存 review-<gate>.md
 # 2026-09-22 实测：41K 字符/83 块文件，--print 长形 16.8s、-p 短形 21.5s 均 SUCCESS，校验串与计数均命中，无 auto-deny；
 # ≤30K 内联分支实跑：单/双引号、中文、$VAR 字面量、反引号回复中逐字保真（3.9s）
@@ -82,6 +82,7 @@ agy -p "Read the whole file <绝对路径，正斜杠> and follow it. Read-only:
 - **前置条件**：必须先交互式 `agy` 登录过一次（缓存凭据）；无终端环境未登录时直接报 `authentication required` 而非挂起——探测时注意区分
 - **MCP auto-deny 吞任务（2026-09-03 实测）**：全局 `~/.gemini/mcp_config.json` 注入的 MCP 服务器对审核者可见，agy 可能主动调用 MCP 工具；无头下 `mcp` 权限无 allow 规则即 auto-deny，**任务不执行但返回 `status:"SUCCESS"` + 空 response**——空 response 按解析失败走降级链。规避：送审包 persona 写明"禁止调用任何 MCP 工具，只用内置工具"（实测加此指令后成功）
 - **cwd 锚定 trusted workspace 根（2026-09-03 实测）**：无头调用时 agy 把"当前工作目录"解析为 trusted workspace 根，不跟随子进程 cwd——送审包内的文件路径一律写绝对路径，不依赖 cwd 相对解析
+- **审核调用一律 `--mode plan`（2026-10-10 实测）**：不加时 agy 会在 workspace 根写临时文件（曾一次留下 18 个 `temp_*.txt`），persona 的「只读」挡不住；plan 模式下读文件、`git log` 等只读命令正常，写文件被拒
 - **文件通道校验（>30K 时）**：dp-packet 文件末尾放随机校验串（如 `RC-E06299`），包内按 `## SECTION n` 分块。解析时先核回复第一行 `Read-Check:` 与第二行 `SECTIONS:`（计数须通读才答得对，防只 grep 末尾），两行都对上才剥掉、再按 `Status:` 解析；任一对不上＝审核失败走降级链
 - **`--print=-` 静默空转（2026-09-22 实测）**：`-` 被当字面 prompt、stdin 被完全忽略，返回 `status:"SUCCESS"`＋通用问候——agy 无文本 stdin（唯一 stdin 通道 `--input-format stream-json` 要换消息 schema，不用）
 - 隐藏路径限制：agy 拒绝 dot 前缀祖先目录的工作区——`.cross-review/` 内产物一律内联进送审包，不传路径

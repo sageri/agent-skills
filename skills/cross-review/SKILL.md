@@ -1,6 +1,6 @@
 ---
 name: cross-review
-version: "0.5.5"
+version: "0.5.6"
 description: 双审（外审门）——用户说"双审"时激活。主代理做、外部 CLI 只读审、逐条裁决。代码任务走五段流水线（需求→构架→规格→实现＋测试→测试）；非代码交付物双审；已有产物定点门审。
 ---
 
@@ -86,6 +86,8 @@ description: 双审（外审门）——用户说"双审"时激活。主代理�
 ```
 
 组装前重跑一次 `git status`；被审产物与附带的 diff 从同一 commit 取（`git show <commit>:<path>`）——并行会话可能在门审中途移动工作区，跨 commit 混装会把自相矛盾的包送出去。产物不在 git 里（用户外部交付物）则直接取文件。
+
+外审前后各记一次 `git status --porcelain`；外审期间新增的未跟踪文件写进 `review-<gate>.md` 并告知用户，不删不移——它也可能是并行会话的产物。
 
 送审包一律先写临时文件再传（claude/codex 走 stdin）。外审者为 agy 时，产物内容一律内联进包（附行号）——agy 拒绝点前缀路径；包超 30K 字符时，打包前先读 adapters.md 的 agy 段（文件通道要求包末校验串＋SECTION 分块，回复先过 Read-Check）；预估超 5 分钟传 `--print-timeout`（均见 adapters.md）。
 
