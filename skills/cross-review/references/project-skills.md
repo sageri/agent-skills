@@ -12,7 +12,7 @@ SKILL.md「项目 skill 接入」判定可用后读本文件。两者都是 Read
 
 ## code-review 用于门C 自审
 
-执行 code-review，再补过 SKILL.md 自审清单第 2、3 条（第 1、4 条已由其 Spec 轴覆盖）。
+执行 code-review，再补过 SKILL.md 自审清单第 2、3 条（第 1、4 条已由其 Spec 轴覆盖，门C 第 5、6 条已由其 Standards 轴覆盖）。
 
 - 基点＝阶段4记下的 commit；定点门审按 code-review 自己的第1步定
 - diff 命令改用 `git diff <基点>`（含未提交改动）；新建文件先 `git add -N` 才进 diff
