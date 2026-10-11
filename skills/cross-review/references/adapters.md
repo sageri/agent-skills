@@ -3,6 +3,8 @@
 > 复制自 `agent-cli-dispatch/references/adapters.md`（2026-09-19），按 cross-review 只读审核场景裁剪；上游契约变更（CLI 升级、gotcha 修正）须手工同步本文件。裁剪范围：去掉写类派发（write_scope 执行、预算硬闸细则、FIX/resume 会话延续、新 CLI 适配模板），命令块与保留 gotcha 逐字照搬。取舍记录在作者私有仓库的 ADR-0003（Update 段）。
 >
 > **已与上游分叉（2026-09-22）**：送审包传参方式——codex 改 stdin、agy 改 `$(cat)`/文件双通道（送审包内联 diff 与译文全文，单引号无法避免；上游八字段任务包不含单引号，无需同改）。同步上游时保留本段分叉，勿覆盖。
+>
+> **已与上游分叉（2026-10-11）**：外审模型/effort 钉死——agy `gemini-3.8-flash-high`、codex `gpt-6.1-sol`＋medium、claude `claude-opus-5-5`＋medium；上游按任务复杂度路由档位。同步上游时保留本分叉，勿覆盖。
 
 ## Claude Code
 
@@ -11,8 +13,8 @@
 claude --version                    # 存在性
 echo "Reply with exactly: pong" | claude -p --output-format json --permission-prompts none 2>&1 | head -c 600   # 无头+登录态一次验证
 
-# ② 无头审核调用（prompt 一律走 stdin，绝不作 positional 参数）
-claude -p --output-format json --permission-prompts none --restricted < packet.md
+# ② 无头审核调用（prompt 一律走 stdin，绝不作 positional 参数；模型/effort 钉死，2026-10-11 实测）
+claude -p --output-format json --permission-prompts none --restricted --model claude-opus-5-5 --effort medium < packet.md
 # --restricted：砍执行类工具与 WebFetch、留检索与文件工具、文件工具限工作目录——审核者只读的执行手段
 
 # ③ 输出契约（实测 2.1.235 / 2.1.259）
@@ -21,13 +23,13 @@ claude -p --output-format json --permission-prompts none --restricted < packet.m
 # 审核结果在 result 字段内按 SKILL.md「审核结果」格式解析
 ```
 
-- 模型档位：`opus`（复杂）/ `sonnet`（常规）
-- **模型别名随 CLI 版本冻结（2026-09-23 实测 2.1.280）**：`opus`→`claude-opus-5-5`、`sonnet`→`claude-sonnet-5`；2.1.278 的 `opus` 仍解析旧 `claude-opus-5`，显式传 `claude-opus-5-5` 直接 400（须 CLI ≥2.1.280）——模型换代后先 `claude update` 再派发，或显式传新代 ID 钉版本。Opus 5.5 默认 effort=medium（Opus 5 为 high），把关/思考档显式传 `--effort`
+- 模型：固定 `claude-opus-5-5` ＋ effort `medium`（Opus 5.5 默认 effort 即 medium，显式传防本机配置漂移）
+- **模型别名随 CLI 版本冻结（2026-09-23 实测 2.1.280）**：`opus`→`claude-opus-5-5`、`sonnet`→`claude-sonnet-5`；2.1.278 的 `opus` 仍解析旧 `claude-opus-5`，显式传 `claude-opus-5-5` 直接 400（须 CLI ≥2.1.280）——命令已显式钉 `claude-opus-5-5`，模型换代后先 `claude update`，再更新此处钉死 ID
 - **stdin 硬约束**：`--allowedTools / --tools / --add-dir / --mcp-config / --file` 均为变长参数，会静默吞掉紧随其后的 positional prompt（实测真 bug）——送审包写临时文件后 `<` 重定向传入，命令行里不出现 prompt 参数
 - **`--permission-prompts none` 必带**：无头安全阀——会弹权限的操作被自动拒并记入 `permission_denials[]`，而非挂起等输入
 - **权限模式**：权限行为受本机 settings.json 漂移影响，调用参数须显式钉全（工具开关写在命令行）
 - 工作目录：无头调用继承当前工作目录
-- **成本 gotcha（2026-09-03 实测，直连 Anthropic 官方）**：每次无头调用注入大系统上下文（cache_creation ~25k tokens）。pong 级成本 2.1.259 实测 $0.011-0.023/次——usage 汇总用 `total_cost_usd` 字段实测监控
+- **成本 gotcha（2026-09-03 实测，直连 Anthropic 官方）**：每次无头调用注入大系统上下文（cache_creation ~25k tokens）。pong 级成本 2.1.259 实测 $0.011-0.023/次（钉 opus-5-5 后 2026-10-11 实测 ~$0.19/次）——usage 汇总用 `total_cost_usd` 字段实测监控
 - 跑飞防护可选：`--max-budget-usd <amount>` 超预算硬停（exit=1、is_error）
 
 ## Codex
@@ -37,9 +39,9 @@ claude -p --output-format json --permission-prompts none --restricted < packet.m
 codex --version
 codex exec "Reply with exactly: pong" --skip-git-repo-check 2>&1 | head -c 600   # 无头+登录态一次验证
 
-# ② 无头审核调用（审核属深度分析，默认 sol＋high；-s read-only 锁死只读——codex 默认 workspace-write，会破坏审核者只读）
+# ② 无头审核调用（模型/effort 钉死：gpt-6.1-sol＋medium，2026-10-11 实测；-s read-only 锁死只读——codex 默认 workspace-write，会破坏审核者只读）
 # 送审包写临时文件后走 stdin（`-` ＝从 stdin 读 prompt；2026-09-22 实测引号/中文/反引号/$/反斜杠逐字保真）
-codex exec - --skip-git-repo-check -s read-only -m gpt-6-sol -c model_reasoning_effort="high" --json < packet.md
+codex exec - --skip-git-repo-check -s read-only -m gpt-6.1-sol -c model_reasoning_effort="medium" --json < packet.md
 
 # ③ 输出契约（0.150 实测）
 # --json 输出 NDJSON 事件流；终态回复文本在最后一个 item.type=agent_message 的 item.completed 事件的 item.text（=审核结果所在）
@@ -51,8 +53,7 @@ codex exec - --skip-git-repo-check -s read-only -m gpt-6-sol -c model_reasoning_
 ```
 
 - **信任目录 gotcha（实测 0.148.0）**：非 git 信任目录下 `codex exec` 直接拒绝（"Not inside a trusted directory and --skip-git-repo-check was not specified"）——无头调用**必须带 `--skip-git-repo-check`**
-- 模型档位：`gpt-6-sol`（复杂/深度分析，审核首选配 high effort）/ `gpt-6-luna`（均衡省额，配 xhigh effort）；均 ~1.05M 上下文
-- reasoning effort：low/medium/high/xhigh，按分析深度选
+- 模型：固定 `gpt-6.1-sol`（复杂/深度分析）＋ effort `medium`（可用档位 low/medium/high/xhigh）；~1.05M 上下文
 - 登录态：codex 账号登录一次即可；探测失败按"CLI 不可用"处理
 
 ## Antigravity CLI（agy）
@@ -62,11 +63,11 @@ codex exec - --skip-git-repo-check -s read-only -m gpt-6-sol -c model_reasoning_
 agy --version
 agy -p "Reply with exactly: pong" --output-format json 2>&1 | head -c 600   # 无头+登录态一次验证
 
-# ② 无头审核调用（预估 >5 分钟显式传 --print-timeout）
+# ② 无头审核调用（模型钉死：gemini-3.8-flash-high，2026-10-11 实测；agy 把 effort 编进模型 ID 后缀，不另传 --effort；--print-timeout 见下方条目）
 # 送审包 ≤30K 字符：命令替换把整个文件作单个 argv 元素，对包内任意引号免疫
-agy -p "$(cat packet.md)" --mode plan --output-format json [--print-timeout 16m]
+agy -p "$(cat packet.md)" --mode plan --model gemini-3.8-flash-high --output-format json [--print-timeout 9m]
 # 送审包 >30K 字符（Windows argv 上限 ~32K）：落 <项目根>/dp-packet-<gate>.md（项目根＝trusted workspace，非点前缀），-p 只传 ASCII 短提示：
-agy -p "Read the whole file <绝对路径，正斜杠> and follow it. Read-only: do not modify files. Do not call any MCP tool. First line of your reply: Read-Check: <file末尾校验串>. Second line: SECTIONS: <file中 SECTION 块数>. Then the review result." --mode plan --output-format json [--print-timeout 16m]
+agy -p "Read the whole file <绝对路径，正斜杠> and follow it. Read-only: do not modify files. Do not call any MCP tool. First line of your reply: Read-Check: <file末尾校验串>. Second line: SECTIONS: <file中 SECTION 块数>. Then the review result." --mode plan --model gemini-3.8-flash-high --output-format json [--print-timeout 9m]
 # 用完删 dp-packet 文件；送审包原文照旧存 review-<gate>.md
 # 2026-09-22 实测：41K 字符/83 块文件，--print 长形 16.8s、-p 短形 21.5s 均 SUCCESS，校验串与计数均命中，无 auto-deny；
 # ≤30K 内联分支实跑：单/双引号、中文、$VAR 字面量、反引号回复中逐字保真（3.9s）
@@ -77,10 +78,10 @@ agy -p "Read the whole file <绝对路径，正斜杠> and follow it. Read-only:
 # stdout=响应，stderr=诊断（错误/认证/权限提示）——配额识别看 stderr
 ```
 
-- 模型：当前账号仅 Flash，无头调用**不指定模型参数**；消耗 Google AI 订阅计算预算额度（5h 窗口），非免费
-- **`--print-timeout` 硬约束（2026-09-03 实测）**：默认 5m，到点 agy 主动 exit 1 + status ERROR——预估 >5 分钟的调用显式传（如 `--print-timeout 16m`）
+- 模型：固定 `gemini-3.8-flash-high`（`agy models` 2026-10-11 实测可选——账号已非仅 Flash，另有 3.1 Pro / Claude 4.6 / GPT-OSS 等，不指定即跟账号默认走）；agy 把 effort 编进模型 ID 后缀，故不另传 `--effort`（独立旗标档位 low|medium|high|xhigh|max，供不带后缀的模型用）；消耗 Google AI 订阅计算预算额度（5h 窗口），非免费
+- **`--print-timeout`（2026-09-22 复核，与上游同步）**：默认不限时、turn 跑完才返回。到期时 exit 0 + `status:"SUCCESS"` + 部分输出 + stderr 警告 `print timeout ... returning partial output`——部分输出解析不出 `Status` 即走降级链。真正的上限是宿主前台命令超时（Claude Code Bash 最长 10 分钟）：显式传值须低于它（如 9m），预估更长则后台调用
 - **前置条件**：必须先交互式 `agy` 登录过一次（缓存凭据）；无终端环境未登录时直接报 `authentication required` 而非挂起——探测时注意区分
-- **MCP auto-deny 吞任务（2026-09-03 实测）**：全局 `~/.gemini/mcp_config.json` 注入的 MCP 服务器对审核者可见，agy 可能主动调用 MCP 工具；无头下 `mcp` 权限无 allow 规则即 auto-deny，**任务不执行但返回 `status:"SUCCESS"` + 空 response**——空 response 按解析失败走降级链。规避：送审包 persona 写明"禁止调用任何 MCP 工具，只用内置工具"（实测加此指令后成功）
+- **MCP auto-deny 吞任务（2026-09-22 复核，与上游同步）**：全局 `~/.gemini/config/mcp_config.json` 注入的 MCP 服务器对审核者可见，agy 可能主动调用 MCP 工具；无头下 `mcp` 权限无 allow 规则即 auto-deny，**任务不执行但返回 `status:"SUCCESS"` + 空 response**（`denied_actions` 含 `{"action":"mcp"}`，stderr 有 `no output produced — a tool required the "mcp" permission`）——空 response 按解析失败走降级链。规避：送审包 persona 写明"禁止调用任何 MCP 工具，只用内置工具"（实测加此指令后成功）
 - **cwd 锚定 trusted workspace 根（2026-09-03 实测）**：无头调用时 agy 把"当前工作目录"解析为 trusted workspace 根，不跟随子进程 cwd——送审包内的文件路径一律写绝对路径，不依赖 cwd 相对解析
 - **审核调用一律 `--mode plan`（2026-10-10 实测）**：不加时 agy 会在 workspace 根写临时文件（曾一次留下 18 个 `temp_*.txt`），persona 的「只读」挡不住；plan 模式下读文件、`git log` 等只读命令正常，写文件被拒
 - **文件通道校验（>30K 时）**：dp-packet 文件末尾放随机校验串（如 `RC-E06299`），包内按 `## SECTION n` 分块。解析时先核回复第一行 `Read-Check:` 与第二行 `SECTIONS:`（计数须通读才答得对，防只 grep 末尾），两行都对上才剥掉、再按 `Status:` 解析；任一对不上＝审核失败走降级链
