@@ -1,6 +1,6 @@
 ---
 name: cross-review
-version: "0.5.7"
+version: "0.5.8"
 description: 双审（外审门）——用户说"双审"时激活。主代理做、外部 CLI 只读审、逐条裁决。三条路径：代码任务、非代码交付物、已有产物定点门审。
 ---
 
@@ -55,7 +55,7 @@ description: 双审（外审门）——用户说"双审"时激活。主代理�
 
 **完成判据**：门B走完，且规格获用户点头——规格阶段改错最便宜，走到测试才发现要重跑整条链。
 
-**4 实现＋测试case** — 开工前把 `git rev-parse HEAD` 记入 `task_plan.md` 作基点（门C 的 diff 起点）。tdd 可用 → 按 tdd 在规格已确认的 seam 上逐片 red→green；不可用 → 主代理自己写测试case。审点：实现与规格一致（改动清单内的全做了、清单外的没做）、测试case 质量。
+**4 实现＋测试case** — 开工前把 `git rev-parse HEAD` 记入 `task_plan.md` 作基点（门C 的 diff 起点）。tdd 可用 → 按 tdd 在规格已确认的 seam 上逐片 red→green；不可用 → 主代理自己写测试case。审点：实现与规格一致（改动清单内的全做了、清单外的没做、做了的实现对了）、仓库规范、测试case 质量。
 
 **完成判据**：门C走完——实际 diff 与改动清单一致；tdd 可用时每个已确认 seam 至少一条测试，且其先红后绿的输出行已记入 `progress.md`。
 
@@ -76,7 +76,12 @@ description: 双审（外审门）——用户说"双审"时激活。主代理�
 3. 验证方式可执行：能跑的命令、能看的证据
 4. 可追溯：每处新增/改动都追溯到用户的一条要求
 
-**门C 自审**：code-review 可用 → 按 [project-skills.md](references/project-skills.md) 执行；不可用 → 过上方清单。
+**门C 自审**：code-review 可用 → 按 [project-skills.md](references/project-skills.md) 执行；不可用 → 过上方清单，再加两条：
+
+5. 仓库规范：找出仓库文档化的编码规范（`CODING_STANDARDS.md`、`CONTRIBUTING.md`、`AGENTS.md` 等），逐条对照 diff，违规引规范文件＋条目
+6. 坏味道：以 Fowler《重构》第 3 章坏味道为判断类基线，只标「疑似 X」不算硬违规；仓库规范认可的写法、工具已管的项跳过
+
+门C 送审包把第 5 条找到的相关规范条目原文内联进去，外审者据此审仓库规范。
 
 **送审包**（自包含，外审者不继承主代理上下文）：
 
