@@ -2,11 +2,12 @@
 // jev-browser-skill — TypeSafe Jev の型付き判断で bsk（BrowserSkill）を駆動する高速ブラウザループ。
 // 依存ゼロ：node:* 組み込み + グローバル fetch のみ。移植元は browser-use/jev-ultrafast。
 // 門禁（機密サイト・資格情報ページ・確定系操作・機密フィールド）はすべてコード側で判定し、プロンプトには頼らない。
-import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { jev, validateChoice, topChoices } from './jev.mjs';
+import { bsk, observe, probe, trimCtx, siteOf, hostGate, pageGate, toCandidates, printLine } from './page.mjs';
 
 const USAGE = `Usage: node loop.mjs --url URL --goal "..." [options]
        node loop.mjs --resume SESSION_ID --goal "..." [options]
@@ -22,19 +23,18 @@ const USAGE = `Usage: node loop.mjs --url URL --goal "..." [options]
   --allow-origin-exit    allow leaving the start site
   --allow-host HOST      exempt a host from the sensitive-site gate (repeatable)
   --browser ID           bsk browser instance for a new session
+  --keep-session         keep the session open on done (to check / read it afterwards)
+  --min-confidence N     hand back as ambiguous when the chosen target's confidence is below N (default 0.55)
 
 Env: TYPESAFE_API_KEY (required), TYPESAFE_MODEL (default jev-latest).
-Stdout last line: {"status","reason","url","steps","session_id","report"} (ASCII-escaped JSON).
+Stdout last line: {"status","reason","url","steps","session_id","report"[,"candidates"]} (ASCII-escaped JSON).
+  candidates (ambiguous / stuck): [{"op":"click|fill|select","target","value"?,"label","p"}], best first.
 Exit: done 0, error 1, likely_done 10, confirm_required 11, text_value_unavailable 12,
-      stuck 13, max_steps 14, deadline 15, blocked 16.`;
+      stuck 13, max_steps 14, deadline 15, blocked 16, ambiguous 17.`;
 
-const EXIT = { done: 0, error: 1, likely_done: 10, confirm_required: 11, text_value_unavailable: 12, stuck: 13, max_steps: 14, deadline: 15, blocked: 16 };
-const MAX_TOKENS = 6000; // observe のソフト上限（Jev 入力は安価だが遅延に効く）
+const EXIT = { done: 0, error: 1, likely_done: 10, confirm_required: 11, text_value_unavailable: 12, stuck: 13, max_steps: 14, deadline: 15, blocked: 16, ambiguous: 17 };
 const MAX_OPTIONS = 250; // Choice の上限は 255
 
-// 機密サイト：ホスト名のラベル単位で照合（privacy.md 参照）
-const SENSITIVE_HOST = /(^|[.-])(bank|banking|ginko|shinkin|jabank|smbc|mufg|mizuho|resona|securities|shoken|nenkin|mynumber|myna|e-?tax|hospital|clinic|medical|kenpo|login|signin|auth|sso|accounts?|id|passport|wallet|pay)([.-]|$)/i;
-const INTRANET_HOST = /^(localhost|0\.0\.0\.0|\[.*\]|10\.\d+\.\d+\.\d+|127\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|169\.254\.\d+\.\d+|[^.]+)$|\.(localhost|local|internal|intranet|corp|lan|home\.arpa)$/i;
 // 確定系操作：クリック対象（リンク含む）の要素名に含まれたら confirm_required
 const COMMIT_WORDS = /送信|購入|注文|削除|確認|確定|支払|決済|申込|申し込|予約|登録|解約|退会|振込|送金|\b(pay|send|delete|remove|book|checkout|purchase|buy|order|confirm|submit|subscribe|unsubscribe|transfer|sign ?up|register)\b/i;
 // 閲覧系リンク（「ご注文履歴を確認する」など）は確定系の語を含んでも通す。button は常に厳格
@@ -80,6 +80,8 @@ const { values: a } = parseArgs({
     'allow-origin-exit': { type: 'boolean', default: false },
     'allow-host': { type: 'string', multiple: true, default: [] },
     browser: { type: 'string' },
+    'min-confidence': { type: 'string', default: '0.55' },
+    'keep-session': { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
   },
 });
@@ -88,8 +90,7 @@ if (a.help) {
   process.exit(0);
 }
 if (!a.goal || (!a.url && !a.resume)) fail(USAGE);
-const KEY = process.env.TYPESAFE_API_KEY;
-if (!KEY) fail('TYPESAFE_API_KEY is not set; nothing started.');
+if (!process.env.TYPESAFE_API_KEY) fail('TYPESAFE_API_KEY is not set; nothing started.');
 
 const values = {};
 for (const pair of a.values.flatMap((s) => s.split(/,(?=[^,=]+=)/))) {
@@ -97,43 +98,13 @@ for (const pair of a.values.flatMap((s) => s.split(/,(?=[^,=]+=)/))) {
   if (i > 0) values[pair.slice(0, i).trim()] = pair.slice(i + 1);
 }
 const quotes = [...a.goal.matchAll(/「([^」]+)」|"([^"]+)"|“([^”]+)”|'([^']+)'/g)].map((m) => m.slice(1).find(Boolean));
-const allowHosts = new Set(a['allow-host'].map((h) => h.toLowerCase()));
+const gateOpts = { allowHosts: new Set(a['allow-host'].map((h) => h.toLowerCase())), allowOriginExit: a['allow-origin-exit'] };
+const minConfidence = Number(a['min-confidence']);
 const expectUrl = a['expect-url'] ? new RegExp(a['expect-url']) : null;
 const expectText = a['expect-text'] ?? null;
 const maxSteps = Number(a['max-steps']);
 const deadline = Date.now() + Number(a['deadline-secs']) * 1000;
 const started = Date.now();
-
-// ---- bsk ----
-// 必ず execFileSync + 配列引数（文字列連結は cmd のクォートで壊れる）
-function bsk(args) {
-  try {
-    const out = execFileSync('bsk', [...args, '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 });
-    return out.trim() ? JSON.parse(out) : {};
-  } catch (e) {
-    let msg = (e.stdout || e.stderr || e.message || '').toString().trim();
-    try { msg = JSON.parse(msg).message ?? msg; } catch {}
-    throw new Error(`bsk ${args[0]} failed: ${msg}`);
-  }
-}
-
-// 1 回の evaluate で URL・タイトル・パスワード欄・期待テキスト・<select>／テキスト入力欄の一覧をまとめて取る。
-// 入力欄は VOM に出ないことがある（Yahoo!路線の出発/到着、PyPI 検索など）ため DOM から拾い、data-jfi で指す
-function probe(sid) {
-  const expr = `(()=>{const vis=e=>e.checkVisibility?e.checkVisibility():true;
-const sel=[...document.querySelectorAll('select')].filter(e=>!e.disabled&&vis(e));
-const txt=[...document.querySelectorAll('input,textarea')].filter(e=>(e.tagName==='TEXTAREA'||['text','search','email','tel','url','number'].includes(e.type))&&!e.disabled&&!e.readOnly&&vis(e));
-const lab=e=>{const l=e.labels&&e.labels[0];return l?l.innerText:''};
-return JSON.stringify({url:location.href,title:document.title,
-password:[...document.querySelectorAll('input[type=password]')].some(vis),
-text:${expectText === null ? 'null' : `(document.body?.innerText||'').includes(${JSON.stringify(expectText)})`},
-selects:sel.map((e,i)=>{e.dataset.jfl=String(i);return{i,label:(e.getAttribute('aria-label')||(()=>{const l=e.labels&&e.labels[0];if(!l)return'';const c=l.cloneNode(true);c.querySelectorAll('select').forEach(x=>x.remove());return c.textContent})()||e.name||'').trim(),
-current:e.selectedOptions[0]?.label||'',options:[...e.options].filter(o=>!o.disabled).map(o=>({value:o.value,label:o.label}))}}),
-inputs:txt.map((e,i)=>{e.dataset.jfi=String(i);return{i,label:(e.getAttribute('aria-label')||lab(e)||e.placeholder||e.title||'').trim(),name:e.name||'',
-hints:[e.placeholder,e.id,e.getAttribute('autocomplete')].filter(Boolean).join(' '),
-context:(e.closest('dl,fieldset,tr,li,form')?.innerText||'').replace(/\\s+/g,' ').trim().slice(0,400),value:e.value}})})})()`;
-  return JSON.parse(bsk(['evaluate', '--session', sid, expr]).value);
-}
 
 function parseVom(text) {
   const elements = [];
@@ -153,51 +124,6 @@ function mask(s) {
     if (v.length >= 3) for (const x of new Set([v, encodeURIComponent(v), encodeURIComponent(v).replaceAll('%20', '+')])) s = s.replaceAll(x, tag);
   }
   return s;
-}
-
-// Jev の入力上限対策：要素ごとに付く長い [ctx: …] を短くする（通販サイトでは数百字×要素数になる）
-const trimCtx = (s) => s.replace(/\[ctx: ([^\]]*)\]/g, (m, c) => (c.length > 60 ? `[ctx: ${c.slice(0, 60)}…]` : m));
-
-// ---- サイト門禁 ----
-const siteOf = (host) => host.replace(/^www\./, '');
-function hostGate(url, base) {
-  let u;
-  try { u = new URL(url); } catch { return `unparseable URL`; }
-  if (!/^https?:$/.test(u.protocol)) return `non-http page (${u.protocol})`;
-  const h = u.hostname.toLowerCase();
-  if (!allowHosts.has(h) && (SENSITIVE_HOST.test(h.replace(/\.[^.]+$/, '')) || INTRANET_HOST.test(h))) return `sensitive_site: ${h} (see references/privacy.md)`;
-  if (base && !a['allow-origin-exit'] && !(h === base || h.endsWith('.' + base))) return `origin_exit: left ${base} for ${h}`;
-  return null;
-}
-
-// ---- Jev ----
-function validateChoice(ans, ids) {
-  const p = ans?.probabilities;
-  const nums = p ? [...Object.values(p), ans.confidence] : [];
-  const ok = p && ids.includes(ans.choice) &&
-    Object.keys(p).length === ids.length && ids.every((id) => id in p) &&
-    nums.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1) &&
-    Math.abs(Object.values(p).reduce((x, y) => x + y, 0) - 1) < 0.02 &&
-    p[ans.choice] >= Math.max(...Object.values(p)) - 1e-6;
-  if (!ok) throw new Error('Invalid TypeSafe response; no action executed.');
-  return ans;
-}
-
-async function jev(body) {
-  for (let attempt = 0; ; attempt++) {
-    const r = await fetch('https://api.typesafe.ai/v1/systemone', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(25_000),
-    });
-    if ([429, 503, 529].includes(r.status) && attempt < 2) {
-      await new Promise((res) => setTimeout(res, 500 * 2 ** attempt));
-      continue;
-    }
-    if (!r.ok) throw new Error(`TypeSafe HTTP ${r.status}: ${(await r.text()).slice(0, 300)}; no action executed.`);
-    return r.json();
-  }
 }
 
 // 1 リクエストで操作 + 各操作の投機ターゲットを同時に問う
@@ -250,6 +176,7 @@ let vom = '';
 let lastFp = null;
 let jevCalls = 0;
 let doneOverrides = 0; // 断言未達のまま DONE を却下した回数
+let candidates = null; // 直近ステップの目標候補（ambiguous / stuck で主モデルに返す）
 const usage = { input_tokens: 0, output_tokens: 0 };
 
 // Windows では fetch 後の process.exit が libuv のアサーションで落ちるため、
@@ -257,23 +184,23 @@ const usage = { input_tokens: 0, output_tokens: 0 };
 const FINISHED = Symbol('finished');
 function finish(status, reason) {
   // done のみここで session を閉じる。hand-back 系は現場を残し、受け手が bsk session stop する
-  if (status === 'done' && sid) {
+  const closing = status === 'done' && !a['keep-session'];
+  if (closing && sid) {
     try { bsk(['session', 'stop', sid]); } catch {}
   }
-  const keep = status !== 'done' && sid ? sid : null;
+  const keep = !closing && sid ? sid : null;
   const steps = history.map(({ step, op, ref, label, ok, error }) => ({ step, op, ref, label, ok, ...(error ? { error } : {}) }));
   const report = {
     status, reason, url: page.url, title: page.title, goal: a.goal, session_id: keep,
     elapsed_ms: Date.now() - started, jev_calls: jevCalls, usage, steps: history, observation: vom,
   };
+  const cands = (status === 'ambiguous' || status === 'stuck') && candidates ? { candidates } : {};
+  Object.assign(report, cands);
   const dir = path.join(os.tmpdir(), 'jev-browser-skill');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}-${sid ?? 'nosession'}.json`);
   fs.writeFileSync(file, JSON.stringify(report, null, 2), 'utf8');
-  // cp932 コンソール対策：stdout は非 ASCII を \\uXXXX にエスケープ
-  const line = JSON.stringify({ status, reason, url: page.url, steps, session_id: keep, report: file })
-    .replace(/[\u007f-￿]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
-  console.log(line);
+  printLine({ status, reason, url: page.url, steps, session_id: keep, report: file, ...cands });
   process.exitCode = EXIT[status];
   throw FINISHED;
 }
@@ -288,7 +215,7 @@ try {
       finish('error', `session ${a.resume} is not active; start over from the URL only if the user agrees`);
     }
   } else {
-    const gate = hostGate(a.url, null);
+    const gate = hostGate(a.url, null, gateOpts);
     if (gate) finish('blocked', gate);
     sid = bsk(['session', 'start', '--no-focus', '--name', 'jev-browser-skill', ...(a.browser ? ['--browser', a.browser] : [])]).session_id;
     bsk(['navigate', a.url, '--session', sid]);
@@ -297,23 +224,13 @@ try {
   for (;;) {
     if (Date.now() > deadline) finish('deadline', `deadline of ${a['deadline-secs']}s reached`);
 
-    // 読み込み・遷移中は "Document changed during observation" / "document identity changed" になるので最大 3 回まで取り直す
-    for (let i = 0; ; i++) {
-      try {
-        vom = bsk(['observe', '--session', sid, '--max-tokens', String(MAX_TOKENS)]).text ?? '';
-        break;
-      } catch (e) {
-        if (i >= 3 || !/changed during observation|document identity changed/i.test(e.message)) throw e;
-        await new Promise((res) => setTimeout(res, 500));
-      }
-    }
+    vom = await observe(sid);
     // 門禁はページ内容を Jev に送る前に判定する。probe は observe の後に取る：
     // 遷移直後は読み込み前の文書を見てしまい、パスワード欄を見逃すため
-    page = probe(sid);
+    page = probe(sid, { expectText });
     base ??= siteOf(new URL(page.url).hostname.toLowerCase());
-    const gate = hostGate(page.url, base);
+    const gate = pageGate(page, base, gateOpts);
     if (gate) finish('blocked', gate);
-    if (page.password) finish('blocked', 'credential_page: a password field is visible; a person must sign in');
     const fp = [page.url, vom, JSON.stringify(page.inputs.map((x) => x.value)), JSON.stringify(page.selects.map((x) => x.current))].join('\n');
     if (history.length) history.at(-1).page_changed = fp !== lastFp;
     lastFp = fp;
@@ -356,6 +273,17 @@ try {
       overridden = true;
     }
     const pick = (id) => validateChoice(res.answers?.[id], Object.keys(questions[id].criteria)).choice;
+    candidates = null;
+    // 目標の確信度が低ければ推測で実行せず、上位候補ごと主モデルに返す（Jev に再判定させない）
+    const target = (id, kind) => {
+      const ans = validateChoice(res.answers?.[id], Object.keys(questions[id].criteria));
+      candidates = toCandidates(kind, topChoices(ans), { elements, inputs: page.inputs, selects: page.selects });
+      if (ans.confidence < minConfidence) {
+        history.push({ ...entry, ok: false, error: 'not executed: low target confidence' });
+        finish('ambiguous', `${op} target confidence ${ans.confidence.toFixed(2)} is below ${minConfidence}; pick from candidates`);
+      }
+      return ans.choice;
+    };
     const entry = { step: history.length + 1, op, url: page.url, jev_ms: Date.now() - t0, confidence: res.answers.operation.confidence, probabilities: res.answers.operation.probabilities, ...(overridden ? { overrode: 'DONE' } : {}) };
     if (op === 'DONE' || op === 'BLOCKED') history.push({ ...entry, ok: true });
 
@@ -368,7 +296,7 @@ try {
       } else if (op === 'SCROLL_DOWN' || op === 'SCROLL_UP') {
         bsk(['wheel', '--delta-y', op === 'SCROLL_DOWN' ? '600' : '-600', '--session', sid]);
       } else if (op === 'CLICK') {
-        const el = elements.find((e) => e.ref === pick('click_target'));
+        const el = elements.find((e) => e.ref === target('click_target', 'click'));
         Object.assign(entry, { ref: el.ref, label: el.name });
         if (COMMIT_WORDS.test(el.name) && !(el.role === 'link' && READ_ONLY_LINK.test(el.name) && !DESTRUCTIVE.test(el.name))) {
           history.push({ ...entry, ok: false, error: 'not executed: irreversible action' });
@@ -376,7 +304,7 @@ try {
         }
         bsk(['click', '@' + el.ref, '--session', sid]);
       } else if (op === 'TYPE_TEXT' || op === 'NEED_VALUE') {
-        const x = page.inputs[Number(pick('type_target').slice(1))];
+        const x = page.inputs[Number(target('type_target', 'fill').slice(1))];
         const el = { ref: `input[${x.i}]`, name: x.label || x.name };
         Object.assign(entry, { ref: el.ref, label: el.name });
         if (SENSITIVE_FIELD.test(`${x.label} ${x.name} ${x.hints} ${x.context}`) || /^cc-|password|one-time-code/.test(x.hints)) {
@@ -392,7 +320,7 @@ try {
         entry.value = v.startsWith('v:') ? `<value:${v.slice(2)}>` : text;
         bsk(['fill', `[data-jfi="${x.i}"]`, '--value', text, '--session', sid]);
       } else if (op === 'SELECT') {
-        const [i, j] = pick('select_option').slice(1).split(':').map(Number);
+        const [i, j] = target('select_option', 'select').slice(1).split(':').map(Number);
         const s = page.selects.find((x) => x.i === i);
         const o = s.options[j];
         Object.assign(entry, { ref: `select[${i}]`, label: `${s.label} -> ${o.label}` });
