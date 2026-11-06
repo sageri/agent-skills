@@ -99,7 +99,7 @@ Your main agent does the work while a different AI CLI reviews it read-only, and
 - 🧱 **Code tasks**: a five-stage pipeline (requirements → architecture → spec → implementation + tests → verification), with a review gate after each stage and your own sign-off on the spec
 - 📝 **Non-code deliverables** (translations, reports, slides): one review gate on the finished product
 - 📂 **Existing work**: point it at a design doc, a diff, or test results and review just that
-- 👥 **Exactly one reviewer per gate**: `agy` (Antigravity CLI) by default; you can name `codex` or `claude`, and it switches to the next one automatically if a CLI call fails
+- 👥 **Exactly one reviewer per gate**: `codex` (gpt-6.1-sol, low effort) by default; you can name `agy` (Antigravity CLI) or `claude`, and it switches to the next one automatically if a CLI call fails
 - 📁 Review packets, raw reviews, verdicts, and token usage are all saved under `.cross-review/`, so every decision is traceable
 
 **Requirements:** at least one of the `agy`, `codex`, or `claude` CLIs installed and logged in.

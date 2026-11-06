@@ -97,7 +97,7 @@ node <skill目录>/scripts/loop.mjs \
 - 🧱 **代码任务**：五段流水线（需求 → 构架 → 规格 → 实现＋测试 → 验证），每段后面一道审核门，规格阶段还要你本人确认
 - 📝 **非代码交付物**（翻译、报告、PPT）：对成品过一道审核门
 - 📂 **已有产物**：直接指定设计文档、diff 或测试结果，只审这一份
-- 👥 **每道门恰好一名审核者**，默认 agy（Antigravity CLI），可以点名 codex 或 claude；某个 CLI 调用失败时自动换下一个
+- 👥 **每道门恰好一名审核者**，默认 codex（gpt-6.1-sol，effort low），可以点名 agy（Antigravity CLI）或 claude；某个 CLI 调用失败时自动换下一个
 - 📁 送审包、审核原文、裁决和 token 用量都落盘在 `.cross-review/`，每个决定都有据可查
 
 **前置条件：** 本机装好并登录 agy、codex、claude 中至少一个 CLI。

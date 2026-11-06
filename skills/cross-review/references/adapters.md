@@ -4,7 +4,7 @@
 >
 > **已与上游分叉（2026-09-22）**：送审包传参方式——codex 改 stdin、agy 改 `$(cat)`/文件双通道（送审包内联 diff 与译文全文，单引号无法避免；上游八字段任务包不含单引号，无需同改）。同步上游时保留本段分叉，勿覆盖。
 >
-> **已与上游分叉（2026-10-11）**：外审模型/effort 钉死——agy `gemini-3.8-flash-high`、codex `gpt-6.1-sol`＋medium、claude `claude-opus-5-5`＋medium；上游按任务复杂度路由档位。同步上游时保留本分叉，勿覆盖。
+> **已与上游分叉（2026-10-11）**：外审模型/effort 钉死——agy `gemini-3.8-flash-high`、codex `gpt-6.1-sol`＋low（2026-11-07 由 medium 下调，同时成为默认外审者）、claude `claude-opus-5-5`＋medium；上游按任务复杂度路由档位。同步上游时保留本分叉，勿覆盖。
 
 ## Claude Code
 
@@ -39,9 +39,9 @@ claude -p --output-format json --permission-prompts none --restricted --model cl
 codex --version
 codex exec "Reply with exactly: pong" --skip-git-repo-check 2>&1 | head -c 600   # 无头+登录态一次验证
 
-# ② 无头审核调用（模型/effort 钉死：gpt-6.1-sol＋medium，2026-10-11 实测；-s read-only 锁死只读——codex 默认 workspace-write，会破坏审核者只读）
+# ② 无头审核调用（模型/effort 钉死：gpt-6.1-sol＋low，2026-11-07 由 medium 下调；-s read-only 锁死只读——codex 默认 workspace-write，会破坏审核者只读）
 # 送审包写临时文件后走 stdin（`-` ＝从 stdin 读 prompt；2026-09-22 实测引号/中文/反引号/$/反斜杠逐字保真）
-codex exec - --skip-git-repo-check -s read-only -m gpt-6.1-sol -c model_reasoning_effort="medium" --json < packet.md
+codex exec - --skip-git-repo-check -s read-only -m gpt-6.1-sol -c model_reasoning_effort="low" --json < packet.md
 
 # ③ 输出契约（0.150 实测）
 # --json 输出 NDJSON 事件流；终态回复文本在最后一个 item.type=agent_message 的 item.completed 事件的 item.text（=审核结果所在）
@@ -53,7 +53,7 @@ codex exec - --skip-git-repo-check -s read-only -m gpt-6.1-sol -c model_reasonin
 ```
 
 - **信任目录 gotcha（实测 0.148.0）**：非 git 信任目录下 `codex exec` 直接拒绝（"Not inside a trusted directory and --skip-git-repo-check was not specified"）——无头调用**必须带 `--skip-git-repo-check`**
-- 模型：固定 `gpt-6.1-sol`（复杂/深度分析）＋ effort `medium`（可用档位 low/medium/high/xhigh）；~1.05M 上下文
+- 模型：固定 `gpt-6.1-sol`（复杂/深度分析）＋ effort `low`（可用档位 low/medium/high/xhigh）；~1.05M 上下文
 - 登录态：codex 账号登录一次即可；探测失败按"CLI 不可用"处理
 
 ## Antigravity CLI（agy）

@@ -1,22 +1,24 @@
 # 隐私边界
 
-循环里每一步的页面 URL、标题和 VOM 快照（可见文本 + 元素名）都会发到 `api.typesafe.ai`（TypeSafe 托管、权重闭源）。所以敏感页面必须在**发送之前**被代码拦下，不靠提示词。规则都在 `scripts/loop.mjs` 顶部的常量里，改规则就改那里。
+loop、check、read 都把当前页的 URL、标题和页面文本发到 `api.typesafe.ai`（TypeSafe 托管、权重闭源）：loop 与 check 发 VOM 快照（可见文本 + 元素名），read 发 `document.body.innerText` 全文切成的块（短于 `--max-chars` 的页面不发，直接返回给你）。所以敏感页面必须在**发送之前**被代码拦下，不靠提示词。发送前门禁的规则在 `scripts/page.mjs`（三者共用 `pageGate`），动作级门禁在 `scripts/loop.mjs` 顶部的常量里，改规则就改那里。
 
-## 每步发送前的门禁（按顺序）
+check 与 read 只读已有 session 的当前页：不导航，所以没有起始站点锁；不收 `--values`，所以也没有值掩码。
 
-每步先 observe（等页面稳定）再判定下表；判定全过才调用 Jev。
+## 发送前的门禁（按顺序）
+
+loop 每步先 observe（等页面稳定）再判定下表；判定全过才调用 Jev。check / read 每次调用判定一次。
 
 | 门禁 | 判定 | 结果 |
 |---|---|---|
 | 协议 | 非 `http(s)` 页面（错误页、`chrome://` 等） | `blocked` |
 | 敏感站点 `SENSITIVE_HOST` | 去掉顶级域后，主机名某一段（按 `.`/`-` 切分）是 bank、shinkin、smbc、mizuho、securities、nenkin、mynumber、e-tax、hospital、clinic、medical、login、signin、auth、sso、account(s)、id、wallet、pay 等 | `blocked: sensitive_site` |
 | 内网 `INTRANET_HOST` | localhost、`0.0.0.0`、私有 IP、IPv6 字面量、无点的单段主机名、`.local` / `.internal` / `.intranet` / `.corp` / `.lan` / `.home.arpa` | `blocked: sensitive_site` |
-| 起始站点锁 | 主机不等于起始站点（去掉 `www.`）且不是它的子域；如 `www.yahoo.co.jp` → `news.yahoo.co.jp` 放行 | `blocked: origin_exit`；`--allow-origin-exit` 关闭此锁 |
+| 起始站点锁（仅 loop） | 主机不等于起始站点（去掉 `www.`）且不是它的子域；如 `www.yahoo.co.jp` → `news.yahoo.co.jp` 放行 | `blocked: origin_exit`；`--allow-origin-exit` 关闭此锁 |
 | 凭据页 | DOM 里有可见的 `input[type=password]` | `blocked: credential_page`，页面文本不发送 |
 
-起始 URL 在开 session 之前就先过一遍前三道。
+loop 的起始 URL 在开 session 之前就先过一遍前三道。
 
-## 动作级门禁
+## 动作级门禁（仅 loop）
 
 - `--values` 的**值**永不发送：页面快照、URL、标题、下拉选项文本、历史里出现的值都替换成 `<value:名字>`（值短于 3 字符时只替换字段值位置）。Jev 只选"填哪个名字"。
 - 敏感字段 `SENSITIVE_FIELD`（password、pin、暗証、card、クレジット、cvv、有効期限、口座、マイナンバー、otp…）：对输入框的 label、name、placeholder、id、autocomplete 及所在容器的周边文本判定，另外 autocomplete 为 `cc-*` / `*password` / `one-time-code` 也算；select 判定其 label。命中即 `blocked: sensitive_field`，绝不 fill。
