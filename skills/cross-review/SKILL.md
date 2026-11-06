@@ -67,7 +67,7 @@ description: 双审（外审门）——用户说"双审"时激活。主代理�
 
 ## 审核门（各门同一套机制）
 
-**外审者**：恰好 1 名，默认 agy；用户点名时三选一（agy / claude / codex），点名优先。无头调用语法、探测与 gotcha 查 [adapters.md](references/adapters.md)。
+**外审者**：恰好 1 名，默认 codex（gpt-6.1-sol＋low）；用户点名时三选一（codex / agy / claude），点名优先。无头调用语法、探测与 gotcha 查 [adapters.md](references/adapters.md)。
 
 **自审清单**（门A–D 同一张，门C 另见下条；门E 的清单在 general-review.md）：送审前逐条过，每条结果（「通过」或「已修正：…」）写进 `review-<gate>.md`。
 
@@ -113,7 +113,7 @@ Findings:
 
 **裁决汇总**（定点门审与通用任务双审的结束输出）：每条 finding 采纳/驳回＋理由、改动清单、外审者与 usage。
 
-**降级链**：外审 CLI 失败/超时 → 重试 1 次 → 换外审者（顺序 agy→codex→claude，起点＝本次选定者；点名者被换须在最终报告注明，如「codex→claude」）→ 全失败则该门仅自审，最终报告标注「本门无外审」。降级链走到底，流水线照常推进。
+**降级链**：外审 CLI 失败/超时 → 重试 1 次 → 换外审者（顺序 codex→agy→claude，起点＝本次选定者；点名者被换须在最终报告注明，如「codex→claude」）→ 全失败则该门仅自审，最终报告标注「本门无外审」。降级链走到底，流水线照常推进。
 
 ## 落盘与恢复
 
