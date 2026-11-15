@@ -10,7 +10,7 @@ description: 读取小红书笔记或微信公众号文章链接的正文，输�
 ## 运行
 
 ```bash
-python "<skill目录>/scripts/read_article.py" "<url>" > temp/article.md 2> temp/article.err
+python "<skill目录>/scripts/read_article.py" "<url>" > temp/article.md 2> temp/article.err   # Linux 用 python3
 ```
 
 - 上式即正确形式：中文输出必须重定向到文件后 Read（cp932 console 直出会乱码）
@@ -20,7 +20,7 @@ python "<skill目录>/scripts/read_article.py" "<url>" > temp/article.md 2> temp
 ## 平台行为
 
 - **微信公众号**（mp.weixin.qq.com）：未登录直抓（桌面 UA + requests），正文从 `js_content` 提取。图片为 `mmbiz.qpic.cn` 链接（有防盗链，CLI 中只列 URL；需看图内容时配合 `analyze_image` MCP 逐张读）。
-- **小红书**（xiaohongshu.com / xhslink.com）：走**移动端 SSR 页面**（`/discovery/item/{id}?xsec_token=...` + 移动 UA + curl_cffi Chrome 指纹），从 `__SETUP_SERVER_STATE__` 提取笔记数据。原理：App 分享链接天生为未登录用户设计（微信内点开），此路径不消耗桌面端游客配额，且是唯一稳定入口（桌面端 explore 路径已被 IP 风控弃用）。链接必须是 App 分享出来的完整链接（带 `xsec_token`），裸链接拿不到内容。数据含：标题/文案/作者/时间/标签/图片或视频直链/互动数；`ip_location` 移动端为空属正常。
+- **小红书**（xiaohongshu.com / xhslink.com）：走**移动端 SSR 页面**（`/discovery/item/{id}?xsec_token=...` + 移动 UA + curl_cffi Chrome 指纹）提取笔记数据。原理：App 分享链接天生为未登录用户设计（微信内点开），此路径不消耗桌面端游客配额，且是唯一稳定入口（桌面端 explore 路径已被 IP 风控弃用）。链接必须是 App 分享出来的完整链接（带 `xsec_token`），裸链接拿不到内容。数据来源双路径兼容（2026-11 起页面结构变更）：旧 `__SETUP_SERVER_STATE__.LAUNCHER_SSR_STORE_PAGE_DATA.noteData`；新 `__INITIAL_STATE__.noteData.data.noteData`（值位置 undefined 先 null 化再解析）。数据含：标题/文案/作者/时间/标签/图片或视频直链/互动数；`ip_location` 移动端为空属正常。
 
 ## 可选兜底：小红书 Cookie
 

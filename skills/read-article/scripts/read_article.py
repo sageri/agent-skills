@@ -166,17 +166,41 @@ def _xhs_img_url(im: dict) -> str:
     return (u or "").replace("http://", "https://", 1)
 
 
-def parse_xhs(url: str, html: str) -> str:
+def _xhs_note(html: str) -> dict:
+    """新旧両構造から note dict を取り出す（取れなければ fail）。
+
+    旧: __SETUP_SERVER_STATE__.LAUNCHER_SSR_STORE_PAGE_DATA.noteData
+        （2026-11 時点では LAUNCHER_SSR_STORE_PAGE_DATA が bool に変質し不通）
+    新: __INITIAL_STATE__.noteData.data.noteData（値位置の undefined を null 化して解析）
+    """
     m = re.search(r"window\.__SETUP_SERVER_STATE__\s*=\s*(.*?)</script>", html, re.DOTALL)
-    if not m:
-        fail("页面无笔记数据（链接过期、笔记删除或被风控）。换 App 重新分享的链接重试。")
-    try:
-        pd = json.loads(m.group(1)).get("LAUNCHER_SSR_STORE_PAGE_DATA") or {}
-    except json.JSONDecodeError:
-        fail("笔记数据解析失败（页面结构可能已变化）。")
-    note = pd.get("noteData") or {}
-    if not (note.get("title") or note.get("desc")):
-        fail("笔记字段为空（链接过期或笔记不可见）。")
+    if m:
+        try:
+            pd = json.loads(m.group(1)).get("LAUNCHER_SSR_STORE_PAGE_DATA")
+            if isinstance(pd, dict):
+                note = pd.get("noteData")
+                if isinstance(note, dict) and (note.get("title") or note.get("desc")):
+                    return note
+        # loads 結果が bool/null 等の非 dict でも .get が落ちないよう属性誤りも呑む
+        except (json.JSONDecodeError, AttributeError):
+            pass
+    m = re.search(r"window\.__INITIAL_STATE__\s*=\s*(.*?)</script>", html, re.DOTALL)
+    if m:
+        # shortcut: 文字列内の ",/:" 直後 "undefined" 誤置換リスクは低い（旧構造不通時のみ通る路）
+        raw = m.group(1).strip().rstrip(";")
+        raw = re.sub(r"(?<=[,:])\s*undefined\b", "null", raw)
+        raw = re.sub(r"(\[)\s*undefined\b", r"\1null", raw)
+        try:
+            note = json.loads(raw)["noteData"]["data"]["noteData"]
+            if isinstance(note, dict) and (note.get("title") or note.get("desc")):
+                return note
+        except (json.JSONDecodeError, KeyError, TypeError):
+            pass
+    fail("页面无笔记数据（链接过期、笔记删除或被风控）。换 App 重新分享的链接重试。")
+
+
+def parse_xhs(url: str, html: str) -> str:
+    note = _xhs_note(html)
 
     user = note.get("user") or {}
     nickname = user.get("nickName") or user.get("nickname") or ""
