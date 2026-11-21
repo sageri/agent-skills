@@ -1,10 +1,14 @@
-# Adapters — 三 CLI 无头审核调用契约
+# Adapters — 四 CLI 无头审核调用契约
 
 > 复制自 `agent-cli-dispatch/references/adapters.md`（2026-09-19），按 cross-review 只读审核场景裁剪；上游契约变更（CLI 升级、gotcha 修正）须手工同步本文件。裁剪范围：去掉写类派发（write_scope 执行、预算硬闸细则、FIX/resume 会话延续、新 CLI 适配模板），命令块与保留 gotcha 逐字照搬。取舍记录在作者私有仓库的 ADR-0003（Update 段）。
 >
 > **已与上游分叉（2026-09-22）**：送审包传参方式——codex 改 stdin、agy 改 `$(cat)`/文件双通道（送审包内联 diff 与译文全文，单引号无法避免；上游八字段任务包不含单引号，无需同改）。同步上游时保留本段分叉，勿覆盖。
 >
 > **已与上游分叉（2026-10-11）**：外审模型/effort 钉死——agy `gemini-3.8-flash-high`、codex `gpt-6.1-sol`＋low（2026-11-07 由 medium 下调，同时成为默认外审者）、claude `claude-opus-5-5`＋medium；上游按任务复杂度路由档位。同步上游时保留本分叉，勿覆盖。
+>
+> **已与上游分叉（2026-11-21）**：CodeBuddy 段的只读手段——上游 worker 带 `-y` 自动批准，本文件改为 `--tools "Read,Grep,Glob"` 只挂只读工具、`--strict-mcp-config` 不加载 MCP。同步上游时保留本分叉，勿覆盖。
+>
+> **已与上游分叉（2026-11-22）**：agy >30K 送审包走 stream-json 输入通道（上游 dispatch 为小任务包 argv 直传，无此分支；原 dp-packet 文件通道作废）。同步上游时保留本分叉，勿覆盖。
 
 ## Claude Code
 
@@ -63,36 +67,63 @@ codex exec - --skip-git-repo-check -s read-only -m gpt-6.1-sol -c model_reasonin
 agy --version
 agy -p "Reply with exactly: pong" --output-format json 2>&1 | head -c 600   # 无头+登录态一次验证
 
-# ② 无头审核调用（模型钉死：gemini-3.8-flash-high，2026-10-11 实测；agy 把 effort 编进模型 ID 后缀，不另传 --effort；--print-timeout 见下方条目）
+# ② 无头审核调用（模型钉死：gemini-3.8-flash-high；effort 走 ID 后缀或独立 --effort 皆可；--print-timeout 见下方条目）
 # 送审包 ≤30K 字符：命令替换把整个文件作单个 argv 元素，对包内任意引号免疫
 agy -p "$(cat packet.md)" --mode plan --model gemini-3.8-flash-high --output-format json [--print-timeout 9m]
-# 送审包 >30K 字符（Windows argv 上限 ~32K）：落 <项目根>/dp-packet-<gate>.md（项目根＝trusted workspace，非点前缀），-p 只传 ASCII 短提示：
-agy -p "Read the whole file <绝对路径，正斜杠> and follow it. Read-only: do not modify files. Do not call any MCP tool. First line of your reply: Read-Check: <file末尾校验串>. Second line: SECTIONS: <file中 SECTION 块数>. Then the review result." --mode plan --model gemini-3.8-flash-high --output-format json [--print-timeout 9m]
-# 用完删 dp-packet 文件；送审包原文照旧存 review-<gate>.md
-# 2026-09-22 实测：41K 字符/83 块文件，--print 长形 16.8s、-p 短形 21.5s 均 SUCCESS，校验串与计数均命中，无 auto-deny；
-# ≤30K 内联分支实跑：单/双引号、中文、$VAR 字面量、反引号回复中逐字保真（3.9s）
+# 送审包 >30K 字符（Windows argv 上限 ~32K）：全文走 stream-json 输入通道，不给 -p（给了报错）；
+# 2026-11-22 实测 62KB 全量送达（标记/计数全对）；文本 stdin（-p -）不可靠，勿用
+python -c "import json,sys;print(json.dumps({'event':'user','message':{'role':'user','content':[{'type':'text','text':open(sys.argv[1],encoding='utf-8').read()]}},ensure_ascii=False))" packet.md \
+  | agy --input-format stream-json --output-format stream-json --mode plan --model gemini-3.8-flash-high [--print-timeout 9m]
+# 包尾放校验串并按 SECTION 分块，包尾指令回复首行 Read-Check:、第二行 SECTIONS:（判据见下方「大包校验」）
+# ≤30K 内联分支实跑（2026-09-22）：单/双引号、中文、$VAR 字面量、反引号回复中逐字保真（3.9s）
 
-# ③ 输出契约：单 JSON 对象（官方 headless 文档）
-# 字段：conversation_id, status(SUCCESS/失败态), response(审核结果所在), duration_seconds,
+# ③ 输出契约：单 JSON 对象（官方 headless 文档；2026-11-22 1.5.13 复核）
+# 字段：conversation_id, status(SUCCESS/ERROR/失败态), response(审核结果所在), duration_seconds,
 #       usage(input/output/thinking/cache_read/total tokens 字典), num_turns
+#       失败态另带 error / finished_reason（如 print_timeout）；被拒操作在 denied_actions[]（如 {"action":"mcp"}）
 # stdout=响应，stderr=诊断（错误/认证/权限提示）——配额识别看 stderr
 ```
 
-- 模型：固定 `gemini-3.8-flash-high`（`agy models` 2026-10-11 实测可选——账号已非仅 Flash，另有 3.1 Pro / Claude 4.6 / GPT-OSS 等，不指定即跟账号默认走）；agy 把 effort 编进模型 ID 后缀，故不另传 `--effort`（独立旗标档位 low|medium|high|xhigh|max，供不带后缀的模型用）；消耗 Google AI 订阅计算预算额度（5h 窗口），非免费
-- **`--print-timeout`（2026-09-22 复核，与上游同步）**：默认不限时、turn 跑完才返回。到期时 exit 0 + `status:"SUCCESS"` + 部分输出 + stderr 警告 `print timeout ... returning partial output`——部分输出解析不出 `Status` 即走降级链。真正的上限是宿主前台命令超时（Claude Code Bash 最长 10 分钟）：显式传值须低于它（如 9m），预估更长则后台调用
+- 模型：固定 `gemini-3.8-flash-high`（`agy models` 2026-11-22 实列 6 个：gemini-3.8-flash high/medium/low、claude-sonnet-4-6、claude-opus-4-6-thinking、gpt-oss-120b-medium——3.1 Pro 已不在列，不指定即跟账号默认走）；effort 走模型 ID 后缀或独立 `--effort`（low～max）皆可；消耗 Google AI 订阅计算预算额度（5h 窗口），非免费
+- **`--print-timeout`（2026-11-22 复核，行为已变）**：默认不限时。到期＝exit 3 + `status:"ERROR"` + `response:""`（stderr `AGY_ERROR`，`finished_reason:"print_timeout"`）——旧版「exit 0 + SUCCESS + 部分输出」已废除，按显式失败走降级链。真正的上限是宿主前台命令超时（Claude Code Bash 最长 10 分钟）：显式传值须低于它（如 9m），预估更长则后台调用
 - **前置条件**：必须先交互式 `agy` 登录过一次（缓存凭据）；无终端环境未登录时直接报 `authentication required` 而非挂起——探测时注意区分
-- **MCP auto-deny 吞任务（2026-09-22 复核，与上游同步）**：全局 `~/.gemini/config/mcp_config.json` 注入的 MCP 服务器对审核者可见，agy 可能主动调用 MCP 工具；无头下 `mcp` 权限无 allow 规则即 auto-deny，**任务不执行但返回 `status:"SUCCESS"` + 空 response**（`denied_actions` 含 `{"action":"mcp"}`，stderr 有 `no output produced — a tool required the "mcp" permission`）——空 response 按解析失败走降级链。规避：送审包 persona 写明"禁止调用任何 MCP 工具，只用内置工具"（实测加此指令后成功）
-- **cwd 锚定 trusted workspace 根（2026-09-03 实测）**：无头调用时 agy 把"当前工作目录"解析为 trusted workspace 根，不跟随子进程 cwd——送审包内的文件路径一律写绝对路径，不依赖 cwd 相对解析
+- **MCP auto-deny 吞任务（2026-09-22、2026-11-22 复核，同形，与上游同步）**：全局 `~/.gemini/config/mcp_config.json` 注入的 MCP 服务器对审核者可见，agy 可能主动调用 MCP 工具；无头下 `mcp` 权限无 allow 规则即 auto-deny，**任务不执行但返回 `status:"SUCCESS"` + 空 response**（`denied_actions` 含 `{"action":"mcp"}`，stderr 有 `no output produced — a tool required the "mcp" permission`）——空 response 按解析失败走降级链。规避：送审包 persona 写明"禁止调用任何 MCP 工具，只用内置工具"（实测加此指令后成功）
+- **cwd（2026-11-22 复核）**：旧行为「无头时 cwd 锚定 trusted workspace 根、不跟随子进程 cwd」已不复现；送审包内文件路径仍一律写绝对路径，不依赖 cwd 相对解析
 - **审核调用一律 `--mode plan`（2026-10-10 实测）**：不加时 agy 会在 workspace 根写临时文件（曾一次留下 18 个 `temp_*.txt`），persona 的「只读」挡不住；plan 模式下读文件、`git log` 等只读命令正常，写文件被拒
-- **文件通道校验（>30K 时）**：dp-packet 文件末尾放随机校验串（如 `RC-E06299`），包内按 `## SECTION n` 分块。解析时先核回复第一行 `Read-Check:` 与第二行 `SECTIONS:`（计数须通读才答得对，防只 grep 末尾），两行都对上才剥掉、再按 `Status:` 解析；任一对不上＝审核失败走降级链
-- **`--print=-` 静默空转（2026-09-22 实测）**：`-` 被当字面 prompt、stdin 被完全忽略，返回 `status:"SUCCESS"`＋通用问候——agy 无文本 stdin（唯一 stdin 通道 `--input-format stream-json` 要换消息 schema，不用）
-- 隐藏路径限制：agy 拒绝 dot 前缀祖先目录的工作区——`.cross-review/` 内产物一律内联进送审包，不传路径
+- **大包校验（>30K 时）**：送审包末尾放随机校验串（如 `RC-E06299`），包内按 `## SECTION n` 分块，包尾指令回复首行 `Read-Check:`、第二行 `SECTIONS:`。解析时先核这两行（计数须通读才答得对，防只读末尾），两行都对上才剥掉、再按 `Status:` 解析；任一对不上＝审核失败走降级链
+- **文本 stdin 不可靠（2026-09-22 初测 / 2026-11-22 复核）**：`-p -` / `--print=-` 只偶发送达，多数失败（空 response、复读原文、答非所问），失败时疑似静默续上最近会话——回包必须核对是否在答本任务。可靠 stdin 通道是 `--input-format stream-json`（消息 schema 见 ② 代码块），>30K 已改走该通道（见头部 2026-11-22 分叉说明）
+- dot 前缀路径：2026-09-03 曾拒绝 dot 前缀祖先目录作工作区，1.5.13 复核不复现；`.cross-review/` 内产物仍一律内联进送审包（自包含，不依赖路径行为）
 - **Git Bash gotcha（实测复核）**：Git Bash 下无头调用正常（首次偶发挂起为冷启动）；探测建议加 60s 超时上限，挂起时重试一次再定性
 - 权限：无头下未匹配 allow 的操作 auto-deny（读文件被拒时输出为空或失败态，走降级链）
 
+## CodeBuddy CLI（codebuddy / cbc）
+
+```bash
+# ① 探测
+codebuddy --version
+echo "Reply with exactly: pong" | codebuddy -p --output-format json --tools "" --max-turns 1   # 无头+登录态一次验证
+# 判定：result trim 后＝pong、is_error=false、stderr 无连接/认证错误——连接失败时 exit 仍为 0，只看退出码必误判
+
+# ② 无头审核调用（模型/effort 沿用上游 worker 默认 deepseek-v4.1-flash＋max；送审包走 stdin）
+codebuddy -p --output-format json --model deepseek-v4.1-flash --effort max \
+  --tools "Read,Grep,Glob" --strict-mcp-config --max-turns 20 < packet.md
+# --tools 只挂只读内置工具（无 Write/Edit/Bash）——审核者只读的执行手段；--strict-mcp-config 不带 --mcp-config ＝不加载任何 MCP
+
+# ③ 输出契约（2.185.0 实测）
+# json：事件数组，取最后一个 type:"result" 对象（兼容直接返回单个终态对象的版本）
+# 字段：result（审核结果所在）、is_error、session_id、total_cost_usd、permission_denials、usage
+# 审核结果在 result 字段内按 SKILL.md「审核结果」格式解析
+```
+
+- **只读实测（2026-11-21，2.185.0）**：上述参数下读文件正常；要求写文件时模型自报只有 Read/Glob/Grep、目标文件未生成。`permission_denials=[]` 不证明未写，只读性以工具挂载为准
+- **stdin 保真（2026-11-21 实测）**：40K 字符/700 块送审包经 stdin 计数与末尾校验串全中；中文、单双引号、反引号、`$VAR`、反斜杠逐字保真——无 argv 上限，不需要 agy 的 30K 分流
+- 模型：`--model` 可选值见 `--help`（hy4 / deepseek / glm / kimi / minimax 等）；effort 档位 minimal/low/medium/high/xhigh/max
+- usage：`total_cost_usd` 实测为 0（不代表订阅实付），原样记 `usage` token 字段
+- `--max-turns` 限的是 agent 轮数，不是金额；审核通读大文件时轮数耗尽会提前返回，解析不出 `Status` 即走降级链
+
 ## Windows 注意事项
 
-- 送审包一律先写临时文件：claude / codex 走 stdin 重定向；agy 走 `"$(cat packet.md)"`（≤30K）或 dp-packet 文件通道（>30K）——包内单引号无需回避
+- 送审包一律先写临时文件：claude / codex / codebuddy 走 stdin 重定向；agy ≤30K 走 `"$(cat packet.md)"`、>30K 走 stream-json 输入通道——包内单引号无需回避
 - Windows 单个命令行上限 ~32K 字符（CreateProcess），这是 agy 30K 分流线的来由
 - PowerShell 手动复现时：多行包先写临时文件再 `Get-Content -Raw` 传入，绕开引号转义
 - 送审包内路径统一正斜杠写（CLI 在 Windows 上均接受）
