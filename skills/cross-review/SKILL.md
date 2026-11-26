@@ -1,6 +1,6 @@
 ---
 name: cross-review
-version: "0.6.1"
+version: "0.9.0"
 description: 双审（外审门）——用户说"双审"时激活。主代理做、外部 CLI 只读审、逐条裁决。三条路径：代码任务、非代码交付物、已有产物定点门审。
 ---
 
@@ -67,7 +67,7 @@ description: 双审（外审门）——用户说"双审"时激活。主代理�
 
 ## 审核门（各门同一套机制）
 
-**外审者**：恰好 1 名，默认 codex（gpt-6.1-sol＋low）；用户点名时四选一（codex / agy / claude / codebuddy），点名优先。无头调用语法、探测与 gotcha 查 [adapters.md](references/adapters.md)。
+**外审者**：恰好 1 名，默认 codex（gpt-6.1-sol＋low）；用户点名时七选一（codex / agy / claude / codebuddy / qoder / pi / dsh），点名优先。无头调用语法、探测与 gotcha 查 [adapters.md](references/adapters.md)。
 
 **自审清单**（门A–D 同一张，门C 另见下条；门E 的清单在 general-review.md）：送审前逐条过，每条结果（「通过」或「已修正：…」）写进 `review-<gate>.md`。
 
@@ -96,7 +96,7 @@ description: 双审（外审门）——用户说"双审"时激活。主代理�
 
 外审前后各记一次 `git status --porcelain`；外审期间新增的未跟踪文件写进 `review-<gate>.md` 并告知用户，不删不移——它也可能是并行会话的产物。
 
-送审包一律先写临时文件再传（claude/codex/codebuddy 走 stdin）。外审者为 agy 时，产物内容一律内联进包（附行号）——自包含、不依赖路径行为；打包前先读 adapters.md 的 agy 段（30K 分流、超时上限）。
+送审包一律先写临时文件再传（claude/codex/codebuddy/qoder/pi/dsh 走 stdin）。外审者为 agy 时，产物内容一律内联进包（附行号）——自包含、不依赖路径行为；打包前先读 adapters.md 的 agy 段（30K 分流、超时上限）。
 
 **审核结果**（只认这个结构；解析不出合法 `Status` → 判失败走降级链）：
 
@@ -113,7 +113,7 @@ Findings:
 
 **裁决汇总**（定点门审与通用任务双审的结束输出）：每条 finding 采纳/驳回＋理由、改动清单、外审者与 usage。
 
-**降级链**：外审 CLI 失败/超时 → 重试 1 次 → 换外审者（顺序 codex→agy→claude→codebuddy，起点＝本次选定者；点名者被换须在最终报告注明，如「codex→claude」）→ 全失败则该门仅自审，最终报告标注「本门无外审」。降级链走到底，流水线照常推进。
+**降级链**：外审 CLI 失败/超时 → 重试 1 次 → 换外审者（顺序 codex→agy→claude→codebuddy→qoder→pi→dsh，起点＝本次选定者；点名者被换须在最终报告注明，如「codex→claude」）→ 全失败则该门仅自审，最终报告标注「本门无外审」。降级链走到底，流水线照常推进。
 
 ## 落盘与恢复
 
